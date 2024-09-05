@@ -128,6 +128,8 @@ public class DefaultResourcesMergeStrategy implements ResourcesMergeStrategy {
 
     /**
      * Number of newlines will be added before merge resource. A non-positive number means not to add newlines.
+     * <p/>
+     * <b>Note: for general resource files(like {@code properties}) should be greater than 0.</b>
      * <p>
      * Default value is {@literal 2}.
      */
@@ -166,6 +168,22 @@ public class DefaultResourcesMergeStrategy implements ResourcesMergeStrategy {
     private boolean useCommonRootDirByGroupIfOutputDirEmpty = true;
 
     /**
+     * Whether the resource should be sorted by {@link DefaultResourcesComparator} before merge.
+     * <p>
+     * <b>Note: has lower priority than {@link #resourcesComparatorClassName}.</b>
+     * <p>
+     * Default value is {@code false}
+     */
+    private boolean useDefaultResourcesComparator = false;
+
+    /**
+     * Full name of {@link ResourcesComparator} implementation class.
+     * <p>
+     * <b>Note: has higher priority than {@link #useDefaultResourcesComparator}.</b>
+     */
+    private String resourcesComparatorClassName;
+
+    /**
      * {@inheritDoc}
      */
     @Override
@@ -174,6 +192,7 @@ public class DefaultResourcesMergeStrategy implements ResourcesMergeStrategy {
         if (StringUtils.isEmpty(filesRegex)) {
             throw new ResourcesMergeException("filesRegex cannot be empty");
         }
+        final ResourcesComparator resourcesComparator = resourcesComparator(useDefaultResourcesComparator, resourcesComparatorClassName);
         final Pattern filesPattern = Pattern.compile(filesRegex);
         final PluginParameterExpressionEvaluator evaluator = new PluginParameterExpressionEvaluator(session, mojoExecution);
         final File buildDir = evaluateDir(evaluator, buildDirExpression);
@@ -189,7 +208,7 @@ public class DefaultResourcesMergeStrategy implements ResourcesMergeStrategy {
         final boolean deleteIfResourceBeenMerged = this.deleteIfResourceBeenMerged;
         final boolean retryIfDeleteFailed = this.retryIfDeleteFailed;
         final String mergeFile = this.mergeFile;
-        final String newlines = System.lineSeparator();
+        final byte[] newlines = System.lineSeparator().getBytes(StandardCharsets.UTF_8);
         final String separator = File.separator; // ? windows
 
         final Map<String, MergeGroupWrapper> mergeGroupMap;
@@ -214,32 +233,46 @@ public class DefaultResourcesMergeStrategy implements ResourcesMergeStrategy {
             if (!dir.exists() && !dir.mkdirs()) {
                 throw new ResourcesMergeException("Cannot create resource output directory: " + dir.getAbsolutePath());
             }
-            final File file = new File(dir, mf);
-            final long l = file.length();
-            try (FileOutputStream fileOutputStream = new FileOutputStream(file, true)) {
+            if (resourcesComparator != null) {
+                mg.getOriginFiles().sort(resourcesComparator::compare);
+            }
+
+            final File tempMergeFile = new File(dir, UUID.randomUUID().toString());
+            try (FileOutputStream fileOutputStream = new FileOutputStream(tempMergeFile)) {
                 for (int i = 0; i < mg.getOriginFiles().size(); i++) {
                     File originFile = mg.getOriginFiles().get(i);
-                    if (Files.isSameFile(file.toPath(), originFile.toPath())) {
-                        logDebug("Skipping resource '{}' is same to target '{}'", originFile.getAbsolutePath(), file.getAbsolutePath());
-                        continue;
-                    }
-                    logDebug("Merging resource '{}' into target '{}'", originFile.getAbsolutePath(), file.getAbsolutePath());
-                    if (numOfNewlinesBeforeMergeResource > 0
-                            // not add newlines if target file is not exist and first merging
-                            && (l > 0 || i > 0)) {
+                    logDebug("Merging resource '{}' into tempTarget '{}'", originFile.getAbsolutePath(), tempMergeFile.getAbsolutePath());
+                    // not add newlines before first resource
+                    if (i > 0) {
                         for (int j = 0; j < numOfNewlinesBeforeMergeResource; j++) {
-                            fileOutputStream.write(newlines.getBytes(StandardCharsets.UTF_8));
+                            fileOutputStream.write(newlines);
                         }
                     }
                     if (StringUtils.isNotEmpty(commentFormat)) {
+                        // not add newline before first comment
+                        if (i > 0) {
+                            fileOutputStream.write(newlines);
+                        }
                         fileOutputStream.write(String.format(commentFormat, originFile.getName()).getBytes(StandardCharsets.UTF_8));
+                        fileOutputStream.write(newlines);
                     }
                     Files.copy(originFile.toPath(), fileOutputStream);
                     delete(originFile, deleteIfResourceBeenMerged, retryIfDeleteFailed);
                 }
-                logInfo("Merging {} resources into target '{}'", mg.getOriginFiles().size(), file.getAbsolutePath());
+                logInfo("Merging {} resources into tempTarget '{}'", mg.getOriginFiles().size(), tempMergeFile.getAbsolutePath());
             } catch (IOException e) {
-                throw new ResourcesMergeException("Cannot create resource file: " + file.getAbsolutePath(), e);
+                throw new ResourcesMergeException("Cannot create tempResource file: " + tempMergeFile.getAbsolutePath(), e);
+            }
+
+            final File targetMergeFile = new File(dir, mf);
+            final Path path;
+            try {
+                path = Files.move(tempMergeFile.toPath(), targetMergeFile.toPath());
+            } catch (IOException e) {
+                throw new ResourcesMergeException("Cannot move tempResource: " + tempMergeFile.getAbsolutePath() + " to targetResource: " + targetMergeFile.getAbsolutePath(), e);
+            }
+            if (!Files.exists(path)) {
+                throw new ResourcesMergeException("Cannot move tempResource: " + tempMergeFile.getAbsolutePath() + " to targetResource: " + targetMergeFile.getAbsolutePath());
             }
         });
     }
@@ -419,6 +452,31 @@ public class DefaultResourcesMergeStrategy implements ResourcesMergeStrategy {
             files.addAll(b.getOriginFiles());
             return new MergeGroupWrapper(paths, files);
         }
+    }
+
+    static ResourcesComparator resourcesComparator(boolean useDefaultResourcesComparator,
+                                                   String resourcesComparatorClassName) {
+        if (StringUtils.isNotEmpty(resourcesComparatorClassName)) {
+            Class<?> resourcesComparatorCls;
+            try {
+                resourcesComparatorCls = Class.forName(resourcesComparatorClassName);
+            } catch (ClassNotFoundException e) {
+                throw new ResourcesMergeException("Cannot find class: " + resourcesComparatorClassName, e);
+            }
+            try {
+                return (ResourcesComparator) resourcesComparatorCls.newInstance();
+            } catch (InstantiationException | IllegalAccessException e) {
+                throw new ResourcesMergeException("Cannot instantiate class: " + resourcesComparatorClassName, e);
+            } catch (ClassCastException e) {
+                throw new ResourcesMergeException("Class: " + resourcesComparatorClassName + " does not implement: " + ResourcesComparator.class.getName(), e);
+            }
+        }
+
+        if (useDefaultResourcesComparator) {
+            return new DefaultResourcesComparator();
+        }
+
+        return null;
     }
 
     /**
