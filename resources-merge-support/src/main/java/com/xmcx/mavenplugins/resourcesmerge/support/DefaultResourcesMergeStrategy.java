@@ -220,7 +220,7 @@ public class DefaultResourcesMergeStrategy implements ResourcesMergeStrategy {
                     .filter(Objects::nonNull)
                     .collect(Collectors.toMap(MergeWrapper::getMergeFile, MergeGroupWrapper::of, MergeGroupWrapper::merge));
         } catch (IOException e) {
-            throw new ResourcesMergeException("Cannot list files by directory: " + originDir.getAbsolutePath(), e);
+            throw new ResourcesMergeException("Cannot list files by directory: '" + originDir.getAbsolutePath() + "'", e);
         }
 
         mergeGroupMap.forEach((mf, mg) -> {
@@ -231,7 +231,7 @@ public class DefaultResourcesMergeStrategy implements ResourcesMergeStrategy {
                 dir = mergeDir;
             }
             if (!dir.exists() && !dir.mkdirs()) {
-                throw new ResourcesMergeException("Cannot create resource output directory: " + dir.getAbsolutePath());
+                throw new ResourcesMergeException("Cannot create resource output directory: '" + dir.getAbsolutePath() + "'");
             }
             if (resourcesComparator != null) {
                 mg.getOriginFiles().sort(resourcesComparator::compare);
@@ -241,7 +241,7 @@ public class DefaultResourcesMergeStrategy implements ResourcesMergeStrategy {
             try (FileOutputStream fileOutputStream = new FileOutputStream(tempMergeFile)) {
                 for (int i = 0; i < mg.getOriginFiles().size(); i++) {
                     File originFile = mg.getOriginFiles().get(i);
-                    logDebug("Merging resource '{}' into tempTarget '{}'", originFile.getAbsolutePath(), tempMergeFile.getAbsolutePath());
+                    logDebug("Merging resource: '{}' into tempMergeFile: '{}'", originFile.getAbsolutePath(), tempMergeFile.getAbsolutePath());
                     // not add newlines before first resource
                     if (i > 0) {
                         for (int j = 0; j < numOfNewlinesBeforeMergeResource; j++) {
@@ -259,20 +259,23 @@ public class DefaultResourcesMergeStrategy implements ResourcesMergeStrategy {
                     Files.copy(originFile.toPath(), fileOutputStream);
                     delete(originFile, deleteIfResourceBeenMerged, retryIfDeleteFailed);
                 }
-                logInfo("Merging {} resources into tempTarget '{}'", mg.getOriginFiles().size(), tempMergeFile.getAbsolutePath());
+                logInfo("Merging {} resources into tempMergeFile: '{}'", mg.getOriginFiles().size(), tempMergeFile.getAbsolutePath());
             } catch (IOException e) {
-                throw new ResourcesMergeException("Cannot create tempResource file: " + tempMergeFile.getAbsolutePath(), e);
+                throw new ResourcesMergeException("Cannot create tempMergeFile: '" + tempMergeFile.getAbsolutePath() + "'", e);
             }
 
             final File targetMergeFile = new File(dir, mf);
+            logInfo("Moving tempMergeFile: '{}' to targetMergeFile: '{}'", tempMergeFile.getAbsolutePath(), targetMergeFile.getAbsolutePath());
             final Path path;
             try {
                 path = Files.move(tempMergeFile.toPath(), targetMergeFile.toPath());
             } catch (IOException e) {
-                throw new ResourcesMergeException("Cannot move tempResource: " + tempMergeFile.getAbsolutePath() + " to targetResource: " + targetMergeFile.getAbsolutePath(), e);
+                throw new ResourcesMergeException("Cannot move tempMergeFile: '"
+                        + tempMergeFile.getAbsolutePath() + "' to targetMergeFile: '" + targetMergeFile.getAbsolutePath() + "'", e);
             }
             if (!Files.exists(path)) {
-                throw new ResourcesMergeException("Cannot move tempResource: " + tempMergeFile.getAbsolutePath() + " to targetResource: " + targetMergeFile.getAbsolutePath());
+                throw new ResourcesMergeException("Cannot move tempMergeFile: '"
+                        + tempMergeFile.getAbsolutePath() + "' to targetMergeFile: '" + targetMergeFile.getAbsolutePath() + "'");
             }
         });
     }
@@ -284,7 +287,7 @@ public class DefaultResourcesMergeStrategy implements ResourcesMergeStrategy {
         String dirStr = evaluateString(evaluator, expression, StringUtils::isNotEmpty);
         File dir = new File(dirStr);
         if (!dir.exists() && !dir.mkdirs()) {
-            throw new ResourcesMergeException("Cannot create directory: " + dirStr);
+            throw new ResourcesMergeException("Cannot create directory: '" + dirStr + "'");
         }
         return dir;
     }
@@ -297,11 +300,11 @@ public class DefaultResourcesMergeStrategy implements ResourcesMergeStrategy {
         try {
             value = (String) evaluator.evaluate(expression);
         } catch (ExpressionEvaluationException e) {
-            throw new ResourcesMergeException("Cannot evaluate value of expression: " + expression, e);
+            throw new ResourcesMergeException("Cannot evaluate value of expression: '" + expression + "'", e);
         }
         // notEmpty
         if (!predicate.test(value)) {
-            throw new ResourcesMergeException("Cannot evaluate value of expression: " + expression);
+            throw new ResourcesMergeException("Cannot evaluate value of expression: '" + expression + "'");
         }
         logDebug("Evaluating expression '{}' to '{}'", expression, value);
         return value;
@@ -329,7 +332,7 @@ public class DefaultResourcesMergeStrategy implements ResourcesMergeStrategy {
             }
         }
 
-        throw new ResourcesMergeException("Cannot delete resource after been merged: " + file.getAbsolutePath());
+        throw new ResourcesMergeException("Cannot delete resource after been merged: '" + file.getAbsolutePath() + "'");
     }
 
     /**
