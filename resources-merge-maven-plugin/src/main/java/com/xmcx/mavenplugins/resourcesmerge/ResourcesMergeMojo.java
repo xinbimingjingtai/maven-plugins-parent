@@ -25,7 +25,7 @@ import java.util.List;
  */
 @Getter
 @Setter
-@Mojo(name = "resources-merge", defaultPhase = LifecyclePhase.PROCESS_RESOURCES, threadSafe = true)
+@Mojo(name = "resources-merge", defaultPhase = LifecyclePhase.PROCESS_RESOURCES, requiresProject = true, threadSafe = true)
 public class ResourcesMergeMojo extends AbstractMojo {
 
     /**
@@ -71,6 +71,9 @@ public class ResourcesMergeMojo extends AbstractMojo {
      * {@inheritDoc}
      */
     public void execute() throws MojoExecutionException {
+        if ("pom".equalsIgnoreCase(project.getPackaging())) {
+            getLog().debug("Skipping the execution for packaging type pom.");
+        }
         if (skip) {
             getLog().info("Skipping the execution.");
             return;

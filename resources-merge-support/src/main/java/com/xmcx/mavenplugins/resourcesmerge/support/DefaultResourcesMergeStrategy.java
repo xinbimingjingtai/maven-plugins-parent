@@ -94,7 +94,7 @@ public class DefaultResourcesMergeStrategy implements ResourcesMergeStrategy {
 
     /**
      * The origin directory of merging file.
-     * Absolute directory or relative to directory represented by {@link #buildDirExpression}.
+     * Relative to directory represented by {@link #buildDirExpression}.
      * <p>
      * Default directory is {@link #defaultMergeDir}.
      *
@@ -105,7 +105,7 @@ public class DefaultResourcesMergeStrategy implements ResourcesMergeStrategy {
 
     /**
      * The output directory of merged file.
-     * Absolute directory or relative to directory represented by {@link #buildDirExpression}.
+     * Relative to directory represented by {@link #buildDirExpression}.
      * <p>
      * If {@link #useCommonRootDirByGroupIfOutputDirEmpty} is {@code true}, it will use
      * common root directory of the origin resource files which is merged into same resource file;
@@ -183,25 +183,37 @@ public class DefaultResourcesMergeStrategy implements ResourcesMergeStrategy {
      */
     private String resourcesComparatorClassName;
 
+
+
     /**
      * {@inheritDoc}
      */
     @Override
     public void merge(MavenProject project, MavenSession session, MojoExecution mojoExecution)
             throws ResourcesMergeException {
+        final PluginParameterExpressionEvaluator evaluator = new PluginParameterExpressionEvaluator(session, mojoExecution);
+        final File buildDir = evaluateDir(evaluator, buildDirExpression);
+        if (!buildDir.exists()) {
+            logInfo("Skip non existing directory represented by '{}'", buildDirExpression);
+            return;
+        }
+        final String originDirStr = StringUtils.isNotEmpty(originDir) ? originDir : defaultOriginDir;
+        logDebug("The resources that comply with the rules in the origin directory represented by '{}' will be merged", originDirStr);
+        final File originDir = new File(buildDir, originDirStr);
+        if (!originDir.exists()) {
+            logWarn("Skip non existing origin directory represented by '{}', pls check the file pom.xml", originDirStr);
+            return;
+        }
         if (StringUtils.isEmpty(filesRegex)) {
-            throw new ResourcesMergeException("filesRegex cannot be empty");
+            throw new ResourcesMergeException("The filesRegex cannot be empty");
         }
         final ResourcesComparator resourcesComparator = resourcesComparator(useDefaultResourcesComparator, resourcesComparatorClassName);
         final Pattern filesPattern = Pattern.compile(filesRegex);
-        final PluginParameterExpressionEvaluator evaluator = new PluginParameterExpressionEvaluator(session, mojoExecution);
-        final File buildDir = evaluateDir(evaluator, buildDirExpression);
-        final File originDir = resolveDir(buildDir, this.originDir, defaultOriginDir);
         final File mergeDir;
         if (StringUtils.isNotEmpty(this.mergeDir)) {
-            mergeDir = resolveDir(buildDir, this.mergeDir);
+            mergeDir = new File(buildDir, this.mergeDir);
         } else {
-            mergeDir = useCommonRootDirByGroupIfOutputDirEmpty ? null : resolveDir(buildDir, defaultMergeDir);
+            mergeDir = useCommonRootDirByGroupIfOutputDirEmpty ? null : new File(buildDir, defaultMergeDir);
         }
         final int numOfNewlinesBeforeMergeResource = this.numOfNewlinesBeforeMergeResource;
         final String commentFormat = this.commentFormat;
@@ -220,7 +232,7 @@ public class DefaultResourcesMergeStrategy implements ResourcesMergeStrategy {
                     .filter(Objects::nonNull)
                     .collect(Collectors.toMap(MergeWrapper::getMergeFile, MergeGroupWrapper::of, MergeGroupWrapper::merge));
         } catch (IOException e) {
-            throw new ResourcesMergeException("Cannot list files by directory: '" + originDir.getAbsolutePath() + "'", e);
+            throw new ResourcesMergeException("Cannot list files represented by directory: '" + originDir.getAbsolutePath() + "'", e);
         }
 
         mergeGroupMap.forEach((mf, mg) -> {
@@ -285,11 +297,10 @@ public class DefaultResourcesMergeStrategy implements ResourcesMergeStrategy {
      */
     private File evaluateDir(PluginParameterExpressionEvaluator evaluator, String expression) {
         String dirStr = evaluateString(evaluator, expression, StringUtils::isNotEmpty);
-        File dir = new File(dirStr);
-        if (!dir.exists() && !dir.mkdirs()) {
-            throw new ResourcesMergeException("Cannot create directory: '" + dirStr + "'");
-        }
-        return dir;
+        // if (!dir.exists() && !dir.mkdirs()) {
+        //     throw new ResourcesMergeException("Cannot create directory: '" + dirStr + "'");
+        // }
+        return new File(dirStr);
     }
 
     /**
@@ -483,25 +494,6 @@ public class DefaultResourcesMergeStrategy implements ResourcesMergeStrategy {
     }
 
     /**
-     * Resolve dir to absolute.
-     */
-    static File resolveDir(File parentDir, String child, String defChild) {
-        String temp = StringUtils.isNotEmpty(child) ? child : defChild;
-        return resolveDir(parentDir, temp);
-    }
-
-    /**
-     * Resolve dir to absolute.
-     */
-    static File resolveDir(File parentDir, String child) {
-        File tempDir = new File(child);
-        if (!tempDir.isAbsolute()) {
-            tempDir = new File(parentDir, child);
-        }
-        return tempDir;
-    }
-
-    /**
      * Debug log.
      */
     static void logDebug(String format, Object... arguments) {
@@ -516,6 +508,15 @@ public class DefaultResourcesMergeStrategy implements ResourcesMergeStrategy {
     static void logInfo(String format, Object... arguments) {
         if (log.isInfoEnabled()) {
             log.info(format, arguments);
+        }
+    }
+
+    /**
+     * Warn log.
+     */
+    static void logWarn(String format, Object... arguments) {
+        if (log.isWarnEnabled()) {
+            log.warn(format, arguments);
         }
     }
 
